@@ -144,25 +144,19 @@ test$shot_made_flag <- rep(c(1,0))
 predictor_matrix_test <- model.matrix(model_formula, data = test)[,-1]
   
 idx<-createFolds(y, k=10) #break data into 10 portions
-errors_for_lambda=rep(0, length(lambda_inputs))
-for (j in 1:length(lambda_inputs)){
-  errors<-rep(0, 10)
+errors<-rep(0, 10)
+lambda_star=0.01668101 #determined through cross validation
 for (i in 1:10) {
   psuedo_train=x[ -idx[[i]] , ]
   psuedo_test=x[ idx[[i]], ]
   outcomes<-y[ -idx[[i]] ]
-  #pred <- attr(class::knn(train=psuedo_train, test=psuedo_test, cl=outcomes, 
-   #                       k=k_vals[j], prob=TRUE), "prob")
-  #build model on 9 folds and predict on other fold
   LASSO_fit <- glmnet(x=psuedo_train, y=outcomes, alpha = 1, 
-                    lambda = lambda_inputs[j], family = "binomial")
+                    lambda = lambda_star, family = "binomial")
   pred=predict(LASSO_fit, newx=psuedo_test)
-   errors[i]=LogLossBinary(y[idx[[i]]], pred) #calculate loss
+  p_hat <- 1/(1 + exp(-pred))
+   errors[i]=LogLossBinary(y[idx[[i]]], p_hat) #calculate loss
 }
-  errors_for_lambda[j]=mean(errors)
-}
-
-cross<-data.frame(k=lambda_inputs, cv_mse=errors_for_lambda)
+  mean(errors)
 ```
 ```
 
