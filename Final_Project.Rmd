@@ -18,7 +18,21 @@ output:
 ## Load all packages
 
 ```{r, message=FALSE, warning=FALSE, fig.width=8, fig.height=4.5, echo=FALSE}
-
+knitr::opts_chunk$set(echo = TRUE)
+library(rpart)
+library(rpart.plot)
+library(class)
+library(MLmetrics)
+library(tidyr)
+library(dplyr)
+library(grid)
+library(jpeg)
+library(rjson)
+library(RCurl)
+library(caret)
+library(densityvis)
+library(ggplot2)
+library(glmnet)
 ```
 
 
@@ -32,12 +46,128 @@ other words, load data via `read_csv("data/CSV_NAME.csv")` and not via
 `read_csv("/Users/aykim/Documents/MATH495/Final_Project/data/CSV_NAME.csv")`
 
 ```{r, message=FALSE, warning=FALSE, fig.width=8, fig.height=4.5, echo=FALSE}
+shots<-read.csv("data/data.csv") #read in data
+test<-subset(shots, is.na(shot_made_flag))
+train<-subset(shots, !is.na(shot_made_flag))
 
+# convert all characters to factors in train and test set
+train <- train %>%
+  mutate(season = as.factor(season),
+         shot_type = as.factor(shot_type),
+         shot_zone_area = as.factor(shot_zone_area),
+         shot_zone_basic = as.factor(shot_zone_basic),
+         shot_zone_range = as.factor(shot_zone_range),
+         team_name = as.factor(team_name),
+         matchup = as.factor(matchup),
+         opponent = as.factor(opponent))
+
+test <- test %>%
+  mutate(season = as.factor(season),
+         shot_type = as.factor(shot_type),
+         shot_zone_area = as.factor(shot_zone_area),
+         shot_zone_basic = as.factor(shot_zone_basic),
+         shot_zone_range = as.factor(shot_zone_range),
+         team_name = as.factor(team_name),
+         matchup = as.factor(matchup),
+         opponent = as.factor(opponent))
 ```
 
 
 
 ## EDA visualizations and tables
+
+
+```{r, echo=FALSE}
+courtImg.URL <- "https://thedatagame.files.wordpress.com/2016/03/nba_court.jpg"
+court <- rasterGrob(readJPEG(getURLContent(courtImg.URL)),
+           width=unit(1,"npc"), height=unit(1,"npc"))
+
+train2<-train
+closest<-hex_pos(train2$loc_x, train2$loc_y, 70,70) #create bins
+train2$center_x=closest[,1] 
+train2$center_y=closest[,2]
+
+train2<-subset(train2, center_y<350 & abs(center_x)<250) #ignore backcourt shots. they are outliers
+
+train3<-train2 %>%
+  group_by(center_x, center_y) %>%
+  summarise(makes=sum(shot_made_flag), tot=n()) %>%
+  mutate(Accuracy=100*makes/tot) #get accuracy for each hexagon
+
+
+ggplot(train3, aes(center_x,center_y, color=Accuracy)) + #create plot
+  annotation_custom(court, -250, 250, -52, 418) +
+  geom_point(aes(size=tot)) + 
+  scale_color_gradient(low="blue", high="red") + 
+  guides(alpha = FALSE, size = FALSE) +
+  xlim(250, -250) +
+  ylim(-52, 418) +
+  xlab("") + ylab("") + ggtitle("Kobe Bryant Shot Accuracy")
+```
+
+
+```{r}
+by_season<-train2 %>%
+  group_by(season) %>%
+  summarise(fg_pct=mean(shot_made_flag), count=n()) %>%
+  mutate(season2=substring(season, 6,7)) %>%
+  mutate(championship=ifelse(season2 %in% c("00", "01", "02", "09", "10"), "Ring", "Other"))
+
+by_season$season2=factor(by_season$season2, levels = by_season$season2[order(by_season$season)])
+  
+ggplot(by_season, aes(season2, fg_pct, fill=as.factor(championship))) + geom_col() +
+  ggtitle("Accuracy by Season")+ xlab("Season") + ylab("FG %") +
+  scale_fill_manual("championship", values = c("Ring" = "yellow", "Other" = "black"))
+```
+```{r}
+
+ LogLossBinary = function(actual, predicted, eps = 1e-15) {
+  predicted = pmin(pmax(predicted, eps), 1-eps)
+  - (sum(actual * log(predicted) + (1 - actual) * log(1 - predicted))) / length(actual)
+} #https://www.r-bloggers.com/making-sense-of-logarithmic-loss/
+
+set.seed(3)
+lambda_inputs <- 10^seq(-2, 0, length = 100)
+
+model_formula <- as.formula(shot_made_flag ~ combined_shot_type +
+                              lat + lon + minutes_remaining +
+                              period + playoffs + season + shot_distance + opponent)
+
+
+# Predictor Matrix for Training Set
+x <- model.matrix(model_formula, data = train)[, -1]
+y <- train$shot_made_flag
+# dummy filler so that we can create the test predictor matrix
+test$shot_made_flag <- rep(c(1,0)) 
+
+# Predictor Matrix for the Test Set
+predictor_matrix_test <- model.matrix(model_formula, data = test)[,-1]
+  
+idx<-createFolds(y, k=10) #break data into 10 portions
+errors_for_lambda=rep(0, length(lambda_inputs))
+for (j in 1:length(lambda_inputs)){
+  errors<-rep(0, 10)
+for (i in 1:10) {
+  psuedo_train=x[ -idx[[i]] , ]
+  psuedo_test=x[ idx[[i]], ]
+  outcomes<-y[ -idx[[i]] ]
+  #pred <- attr(class::knn(train=psuedo_train, test=psuedo_test, cl=outcomes, 
+   #                       k=k_vals[j], prob=TRUE), "prob")
+  #build model on 9 folds and predict on other fold
+  LASSO_fit <- glmnet(x=psuedo_train, y=outcomes, alpha = 1, 
+                    lambda = lambda_inputs[j], family = "binomial")
+  pred=predict(LASSO_fit, newx=psuedo_test)
+   errors[i]=LogLossBinary(y[idx[[i]]], pred) #calculate loss
+}
+  errors_for_lambda[j]=mean(errors)
+}
+
+cross<-data.frame(k=lambda_inputs, cv_mse=errors_for_lambda)
+```
+```
+
+
+
 
 Note: If you had to illustrate using no modelling but only graphs and tables which
 variables have the most predictive power, which would you include?
